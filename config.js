@@ -1,6 +1,11 @@
 window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3xHtQgs35n_aD3m8UKvtSIp48LnDBUQsODCS2EZy4vnkNYtjQGWq2Kg/exec";
 
+// 참가자 완료 화면에서는 재시작/처음 화면 버튼을 아예 보이지 않게 합니다.
 (function () {
+  const style = document.createElement('style');
+  style.textContent = '#final .actions{display:none!important}';
+  document.head.appendChild(style);
+
   const COMPLETE_KEY = 'oksai_game_complete_v1';
   const COMPLETE_NAME_KEY = 'oksai_game_complete_name_v1';
 
@@ -18,7 +23,6 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     if (doneName) doneName.textContent = localStorage.getItem(COMPLETE_NAME_KEY) || '';
     if (progress) progress.textContent = '완료';
 
-    // 참가자용 완료 화면에서는 재시작 버튼을 없애 중복 참여를 막습니다.
     if (final) {
       final.querySelectorAll('button').forEach(btn => btn.remove());
     }
@@ -33,7 +37,6 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       history.replaceState({}, '', location.pathname);
     }
 
-    // 기존 finishGame이 정의된 뒤 감싸서 완료 상태를 저장합니다.
     if (typeof window.finishGame === 'function') {
       const originalFinishGame = window.finishGame;
       window.finishGame = function (selfIndex) {
