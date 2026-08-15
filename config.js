@@ -24,6 +24,25 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     {name:'루스 베이더 긴즈버그', power:'제도', image:'assets/cards/ruth-bader-ginsburg.svg', text:'좋은 의도를 원칙과 절차로 남겨 지속 가능한 변화를 만드는 힘이 강합니다.'}
   ];
 
+  // 대표카드는 문제 정답 횟수와 분리합니다.
+  // 6개 힘마다 2문항씩, 총 12문항 중 자신을 잘 설명하는 4개를 순서대로 고릅니다.
+  // 1~4순위에 4·3·2·1점을 주고 가장 높은 힘을 대표카드로 계산합니다.
+  const TRAIT_ITEMS = [
+    {card:0, text:'중요한 결정을 앞두면 주변 분위기보다 근거와 책임을 먼저 살피는 편이다.'},
+    {card:0, text:'모두가 당연하다고 여기는 방식도 필요하면 다시 질문하는 편이다.'},
+    {card:1, text:'반복되는 문제를 보면 개인의 성격보다 역할·권한·환경의 구조를 먼저 살피는 편이다.'},
+    {card:1, text:'누가 감정노동이나 잡무를 더 많이 떠맡는지 업무 배분의 패턴을 눈여겨보는 편이다.'},
+    {card:2, text:'불편함이나 분노가 생기면 없애기보다 그것이 무엇을 알려주는지 생각해보는 편이다.'},
+    {card:2, text:'같은 사건도 위치와 경험이 다르면 다르게 보일 수 있다고 생각하는 편이다.'},
+    {card:3, text:'말이 적은 사람의 의견도 의사결정에 들어오게 하는 방법을 찾는 편이다.'},
+    {card:3, text:'한 사람의 이야기만으로 전체를 판단하지 않으려고 여러 목소리를 듣는 편이다.'},
+    {card:4, text:'모두에게 똑같은 규칙인지보다 실제로 누가 더 불리한지 먼저 살피는 편이다.'},
+    {card:4, text:'누군가 혼자 문제를 감당하고 있으면 개인의 부담보다 함께 해결할 방법을 먼저 찾는 편이다.'},
+    {card:5, text:'좋은 사람의 선의보다 기록·보고·이의제기 같은 절차가 중요하다고 생각하는 편이다.'},
+    {card:5, text:'같은 문제가 반복되면 개인의 중재보다 기준과 프로토콜을 남겨야 한다고 생각하는 편이다.'}
+  ];
+  const RANK_WEIGHTS = [4,3,2,1];
+
   const style = document.createElement('style');
   style.textContent = `
     #final .actions{display:none!important}
@@ -40,6 +59,21 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     @media(max-width:720px){#finalResultCard .resultBody{padding:19px}}
   `;
   document.head.appendChild(style);
+
+  function representativeIndex() {
+    const scores = Array(6).fill(0);
+    traitChoices.forEach(function(itemIndex, rank){
+      const item = TRAIT_ITEMS[itemIndex];
+      if (item) scores[item.card] += RANK_WEIGHTS[rank] || 0;
+    });
+    const max = Math.max.apply(null, scores);
+    // 동점이면 더 높은 순위에서 먼저 선택한 힘을 우선합니다.
+    for (const itemIndex of traitChoices) {
+      const item = TRAIT_ITEMS[itemIndex];
+      if (item && scores[item.card] === max) return item.card;
+    }
+    return 0;
+  }
 
   function renderResult(result) {
     const final = document.getElementById('final');
@@ -88,23 +122,88 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
   }
 
   document.addEventListener('DOMContentLoaded', function () {
-    if (typeof window.finishGame === 'function') {
-      const originalFinishGame = window.finishGame;
-      window.finishGame = function (selfIndex) {
-        let predIndex = 0;
-        try { predIndex = predictedCard(); } catch(e) {}
-        const nameEl = document.getElementById('nameInput');
-        let name = '';
-        try { name = (player || (nameEl && nameEl.value) || '').trim(); }
-        catch(e) { name = ((nameEl && nameEl.value) || '').trim(); }
-        const result = {predictedIndex: predIndex, selfIndex: selfIndex};
-        originalFinishGame(selfIndex);
-        localStorage.setItem(COMPLETE_KEY, '1');
-        localStorage.setItem(COMPLETE_NAME_KEY, name);
-        localStorage.setItem(COMPLETE_RESULT_KEY, JSON.stringify(result));
-        setTimeout(function(){ renderResult(result); showCompletedScreen(); }, 0);
-      };
+    const traitsSection = document.getElementById('traits');
+    if (traitsSection) {
+      const title = traitsSection.querySelector('.step-title');
+      const sub = traitsSection.querySelector('.muted');
+      if (title) title.textContent = '나를 가장 잘 설명하는 문장 4개를 순서대로 골라주세요';
+      if (sub) sub.textContent = '첫 번째 선택은 1순위, 네 번째 선택은 4순위로 기록됩니다. 대표카드는 이 성향 선택만으로 계산합니다.';
     }
+    const doneMuted = document.querySelector('#final .donebox .muted');
+    if (doneMuted) doneMuted.textContent = '당신이 찾아낸 대표 카드를 확인해보세요.';
+
+    // 12문항 렌더링
+    window.renderTraits = function () {
+      traitGrid.innerHTML = '';
+      TRAIT_ITEMS.forEach(function(item, i){
+        const b = document.createElement('button');
+        b.className = 'trait';
+        b.dataset.i = i;
+        b.textContent = item.text;
+        b.onclick = function(){ pickTrait(i, b); };
+        traitGrid.appendChild(b);
+      });
+    };
+
+    // 4개 순위 선택
+    window.pickTrait = function (i, b) {
+      const pos = traitChoices.indexOf(i);
+      if (pos >= 0) traitChoices.splice(pos, 1);
+      else {
+        if (traitChoices.length >= 4) return;
+        traitChoices.push(i);
+      }
+      document.querySelectorAll('.trait').forEach(function(x){
+        const j = +x.dataset.i;
+        const p = traitChoices.indexOf(j);
+        x.classList.toggle('selected', p >= 0);
+        const old = x.querySelector('.rank-badge');
+        if (old) old.remove();
+        if (p >= 0) x.insertAdjacentHTML('beforeend', `<span class="rank-badge">${p+1}순위</span>`);
+      });
+      traitNext.disabled = traitChoices.length !== 4;
+    };
+
+    // 문제 정답 횟수는 대표카드 계산에서 완전히 제외
+    window.predictedCard = representativeIndex;
+
+    // 기존 finishGame 대신 새 판정·저장 로직 사용
+    window.finishGame = function (selfIndex) {
+      const finishAt = Date.now();
+      const pred = representativeIndex();
+      const firstCorrect = attempts.filter(function(a){ return a === 1; }).length;
+      const selectedTraits = traitChoices.map(function(i){
+        const item = TRAIT_ITEMS[i];
+        return item ? cardMeta[item.card].name : '';
+      });
+      const payload = {
+        session_id: sessionId,
+        name: player,
+        start_time: new Date(startAt).toISOString(),
+        finish_time: new Date(finishAt).toISOString(),
+        duration_ms: finishAt - startAt,
+        first_choices: firstChoices,
+        attempts: attempts,
+        first_correct: firstCorrect,
+        trait_choices: selectedTraits,
+        predicted_card: cardMeta[pred].name,
+        self_card: cardMeta[selfIndex].name,
+        self_match: pred === selfIndex
+      };
+      submit(payload);
+      selfpick.classList.add('hidden');
+      final.classList.remove('hidden');
+      doneName.textContent = player;
+      progress.textContent = '완료';
+
+      const result = {predictedIndex: pred, selfIndex: selfIndex};
+      localStorage.setItem(COMPLETE_KEY, '1');
+      localStorage.setItem(COMPLETE_NAME_KEY, player);
+      localStorage.setItem(COMPLETE_RESULT_KEY, JSON.stringify(result));
+      renderResult(result);
+      showCompletedScreen();
+    };
+
     if (localStorage.getItem(COMPLETE_KEY) === '1') showCompletedScreen();
   });
 })();
