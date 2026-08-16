@@ -24,11 +24,69 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     {name:'루스 베이더 긴즈버그', power:'제도', image:'assets/cards/ruth-bader-ginsburg.svg', text:'좋은 의도를 원칙과 절차로 남겨 지속 가능한 변화를 만드는 힘이 강합니다.'}
   ];
 
-  // 대표카드 계산 규칙
-  // 1) 참가자가 자신을 설명하는 문장 4개를 1~4순위로 선택: 4·3·2·1점
-  // 2) 각 인물의 방에서 첫 시도에 정답을 맞히면 해당 인물 친화도 +1점
-  // 3) 한 번 이상 틀린 뒤 정답을 맞히면 퀴즈 정답으로는 인정하지만 친화도 보너스는 없음
-  // 따라서 '지식 정답'과 '성향 친화도'를 분리해 기록합니다.
+  const POWER_INDEX = {판단:0, 구조:1, 관점:2, 목소리:3, 연대:4, 제도:5};
+  const POWER_NAMES = ['판단','구조','관점','목소리','연대','제도'];
+
+  // 각 선택지는 모두 나름의 합리적인 관점을 대표합니다.
+  // 정답은 그 상황에서 '가장 먼저/우선' 적용할 관점일 뿐, 다른 선택이 무가치하다는 뜻은 아닙니다.
+  // firstLens는 참가자의 최초 반응만 기록합니다.
+  const STAGE_PATCHES = [
+    {
+      choices:[
+        '왜 이 관행이 계속 유지됐는지 역할·권한·업무 구조부터 살펴본다.',
+        '지금 상황의 사실, 책임, 위험을 다시 검토해 이번 결정이 타당한지 판단한다.',
+        '비슷한 문제가 반복되지 않도록 향후 적용할 기준과 절차를 문서화한다.'
+      ],
+      lenses:['구조','판단','제도'], correct:1,
+      explain:'관행은 그 자체로 판단의 근거가 되지 않습니다. 이 상황에서는 먼저 현재의 사실·책임·위험을 독립적으로 판단한 뒤 구조나 제도 개선으로 이어가는 것이 핵심입니다.'
+    },
+    {
+      choices:[
+        '누구에게 어떤 일이 반복해서 몰리는지 업무 배분·권한·책임 구조를 확인한다.',
+        '당사자가 그 부담을 어떻게 경험하고 있는지 충분히 듣고 의미를 파악한다.',
+        '앞으로 같은 편중이 생기지 않도록 업무분장과 보고 기준을 명문화한다.'
+      ],
+      lenses:['구조','관점','제도'], correct:0,
+      explain:'반복되는 부담은 개인의 성격보다 배분 구조에서 생길 수 있습니다. 이 상황에서는 먼저 패턴과 권한 구조를 확인하는 것이 우선입니다.'
+    },
+    {
+      choices:[
+        '감정과 사실을 구분해 어떤 근거가 확인되는지 차분히 점검한다.',
+        '그 상담자가 충분히 말할 수 있도록 경험과 문제의식을 더 구체적으로 듣는다.',
+        '그 불편함과 분노가 어떤 위험·불균형·가치를 감지한 신호인지 함께 검토한다.'
+      ],
+      lenses:['판단','목소리','관점'], correct:2,
+      explain:'감정은 판단을 대신하지 않지만 중요한 인식 자료가 될 수 있습니다. 이 상황에서는 감정이 무엇을 감지했는지 탐색하는 관점이 핵심입니다.'
+    },
+    {
+      choices:[
+        '발언 순서·익명 의견·사전 수렴 등 다양한 목소리가 실제 의사결정에 들어오는 장치를 만든다.',
+        '말하기 어려운 구성원끼리 서로 지지하고 함께 의견을 낼 수 있는 방법을 마련한다.',
+        '회의 전 쟁점과 근거를 문서로 받아 발언의 크기보다 내용의 타당성을 비교한다.'
+      ],
+      lenses:['목소리','연대','판단'], correct:0,
+      explain:'여러 사람이 존재한다고 해서 여러 목소리가 자동으로 반영되지는 않습니다. 이 상황에서는 말해지지 않은 관점이 의사결정에 들어오도록 통로를 만드는 것이 우선입니다.'
+    },
+    {
+      choices:[
+        '어떤 직급·돌봄 조건·장애 여부에서 이용 장벽이 커지는지 패턴을 먼저 분석한다.',
+        '누구나 실제로 이용할 수 있도록 신청·보호·예외 기준을 제도로 보완한다.',
+        '실제로 이용하기 어려운 사람들의 경험을 듣고 필요한 지원을 함께 설계한다.'
+      ],
+      lenses:['구조','제도','연대'], correct:2,
+      explain:'형식적으로 같은 규칙보다 실제 접근 가능성이 중요합니다. 이 상황에서는 불리함을 겪는 사람들과 함께 필요한 지원을 설계하는 연대의 관점이 우선입니다.'
+    },
+    {
+      choices:[
+        '반복된 갈등 사례를 검토해 어떤 판단이 일관되게 필요한지 기준을 정리한다.',
+        '보고·기록·이의제기·보호 절차를 명문화하고 담당자가 바뀌어도 동일하게 적용한다.',
+        '특정 관리자에게 권한이 몰리지 않도록 역할과 책임의 구조를 다시 배분한다.'
+      ],
+      lenses:['판단','제도','구조'], correct:1,
+      explain:'지속 가능한 권리는 개인의 선의보다 예측 가능한 절차로 보호되어야 합니다. 이 상황에서는 반복 가능한 제도를 만드는 것이 핵심입니다.'
+    }
+  ];
+
   const TRAIT_ITEMS = [
     {card:0, text:'중요한 결정을 앞두면 주변 분위기보다 근거와 책임을 먼저 살피는 편이다.'},
     {card:0, text:'모두가 당연하다고 여기는 방식도 필요하면 다시 질문하는 편이다.'},
@@ -44,6 +102,8 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     {card:5, text:'같은 문제가 반복되면 개인의 중재보다 기준과 프로토콜을 남겨야 한다고 생각하는 편이다.'}
   ];
   const RANK_WEIGHTS = [4,3,2,1];
+  const FIRST_CHOICE_POINTS = 2;
+  const FIRST_CORRECT_BONUS = 1;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -55,7 +115,8 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     #finalResultCard h3{font-family:serif;color:#f0d79b;font-size:clamp(28px,5vw,42px);margin:8px 0 4px}
     #finalResultCard .power{color:#d8b56e;font-weight:800;margin-bottom:13px}
     #finalResultCard .why{color:#ddd1bf;line-height:1.8;margin:0 0 12px}
-    #finalResultCard .basis{color:#b9ad9b;font-size:13px;line-height:1.65;margin:0 0 20px}
+    #finalResultCard .basis{color:#b9ad9b;font-size:13px;line-height:1.65;margin:0 0 16px}
+    #finalResultCard .scoreLine{color:#d7c7ac;font-size:13px;line-height:1.8;margin:0 0 20px;padding:12px 14px;border:1px solid rgba(216,181,110,.18);border-radius:12px;background:rgba(0,0,0,.12)}
     #finalResultCard .matchBox{border-top:1px solid rgba(216,181,110,.22);padding-top:18px;line-height:1.75}
     #finalResultCard .matchGood{color:#f0d79b;font-weight:800;font-size:18px}
     #finalResultCard .matchOther{color:#d7c7ac;font-weight:700;font-size:17px}
@@ -63,10 +124,33 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
   `;
   document.head.appendChild(style);
 
+  function firstChoiceLens(stageIndex) {
+    if (typeof firstChoices === 'undefined' || !Array.isArray(firstChoices)) return '';
+    const letter = firstChoices[stageIndex] || '';
+    const choiceIndex = letter ? letter.charCodeAt(0) - 65 : -1;
+    const patch = STAGE_PATCHES[stageIndex];
+    return patch && choiceIndex >= 0 ? (patch.lenses[choiceIndex] || '') : '';
+  }
+
   function affinityScores() {
     const scores = Array(6).fill(0);
 
-    // 자기 성향 선택: 1~4순위 = 4·3·2·1점
+    // 1) 실제 게임에서 처음 고른 관점: 해당 렌즈 +2
+    for (let i = 0; i < STAGE_PATCHES.length; i++) {
+      const lens = firstChoiceLens(i);
+      if (lens && POWER_INDEX[lens] != null) scores[POWER_INDEX[lens]] += FIRST_CHOICE_POINTS;
+    }
+
+    // 2) 최초 선택이 그 방의 최적 정답이었다면 핵심 렌즈 +1 보너스
+    if (typeof attempts !== 'undefined' && Array.isArray(attempts)) {
+      attempts.forEach(function(count, stageIndex){
+        if (count === 1 && stageIndex >= 0 && stageIndex < scores.length) {
+          scores[stageIndex] += FIRST_CORRECT_BONUS;
+        }
+      });
+    }
+
+    // 3) 최종 자기보고 성향 문장: 1~4순위 = 4·3·2·1점
     if (typeof traitChoices !== 'undefined' && Array.isArray(traitChoices)) {
       traitChoices.forEach(function(itemIndex, rank){
         const item = TRAIT_ITEMS[itemIndex];
@@ -74,37 +158,37 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       });
     }
 
-    // 퀴즈 첫 시도 정답: 그 방의 인물 친화도 +1
-    // stages와 cardMeta는 같은 순서(판단·구조·관점·목소리·연대·제도)입니다.
-    if (typeof attempts !== 'undefined' && Array.isArray(attempts)) {
-      attempts.forEach(function(count, stageIndex){
-        if (count === 1 && stageIndex >= 0 && stageIndex < scores.length) {
-          scores[stageIndex] += 1;
-        }
-      });
-    }
     return scores;
   }
 
   function representativeIndex() {
     const scores = affinityScores();
     const max = Math.max.apply(null, scores);
+    const tied = scores.map(function(v,i){return v===max?i:-1;}).filter(function(i){return i>=0;});
+    if (tied.length === 1) return tied[0];
 
-    // 동점 1순위: 참가자가 성향문장에서 더 먼저 고른 카드
+    // 동점이면 실제 게임의 최초 선택에서 더 자주 나온 렌즈 우선
+    const firstCounts = Array(6).fill(0);
+    for (let i=0;i<STAGE_PATCHES.length;i++) {
+      const lens = firstChoiceLens(i);
+      if (lens && POWER_INDEX[lens] != null) firstCounts[POWER_INDEX[lens]]++;
+    }
+    let best = tied[0];
+    tied.forEach(function(i){ if (firstCounts[i] > firstCounts[best]) best = i; });
+    if (firstCounts[best] > 0) return best;
+
+    // 그래도 같으면 자기보고 성향에서 더 먼저 선택된 힘 우선
     if (typeof traitChoices !== 'undefined' && Array.isArray(traitChoices)) {
       for (const itemIndex of traitChoices) {
         const item = TRAIT_ITEMS[itemIndex];
-        if (item && scores[item.card] === max) return item.card;
+        if (item && tied.includes(item.card)) return item.card;
       }
     }
+    return best;
+  }
 
-    // 동점 2순위: 첫 시도 정답을 더 먼저 기록한 방
-    if (typeof attempts !== 'undefined' && Array.isArray(attempts)) {
-      for (let i = 0; i < attempts.length; i++) {
-        if (attempts[i] === 1 && scores[i] === max) return i;
-      }
-    }
-    return scores.indexOf(max) >= 0 ? scores.indexOf(max) : 0;
+  function scoreSummary(scores) {
+    return scores.map(function(v,i){return POWER_NAMES[i]+' '+v;}).join(' · ');
   }
 
   function renderResult(result) {
@@ -120,19 +204,21 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     const predicted = cardMeta[result.predictedIndex] || cardMeta[0];
     const self = cardMeta[result.selfIndex] || cardMeta[0];
     const matched = result.predictedIndex === result.selfIndex;
+    const scores = result.scores || [];
     box.innerHTML = `
       <img class="resultPhoto" src="${predicted.image}" alt="${predicted.name} 카드 이미지">
       <div class="resultBody">
         <div class="resultLabel">GAME DISCOVERED CARD</div>
         <h3>${predicted.name}</h3>
-        <div class="power">핵심 힘 · ${predicted.power}</div>
+        <div class="power">주된 사고 렌즈 · ${predicted.power}</div>
         <p class="why">${predicted.text}</p>
-        <p class="basis">게임이 발견한 카드는 ‘내가 고른 성향 문장의 우선순위’와 ‘각 인물의 방에서 첫 시도에 정답을 알아본 기록’을 함께 반영해 계산했습니다. 심리검사나 성격 진단이 아니라 이 게임 안에서 드러난 친화도를 보여주는 결과입니다.</p>
+        <p class="basis">이 결과는 정답률만으로 정하지 않습니다. 각 문제에서 처음 선택한 A·B·C가 어떤 사고 렌즈를 나타냈는지, 첫 선택이 그 상황의 최적 답이었는지, 마지막 성향 문장에서 무엇을 우선순위로 골랐는지를 함께 계산합니다. 다른 선택지는 ‘나쁜 답’이 아니라 서로 다른 관점을 뜻합니다.</p>
+        ${scores.length ? `<div class="scoreLine"><strong>나의 렌즈 점수</strong><br>${scoreSummary(scores)}</div>` : ''}
         <div class="matchBox">
           <div><strong>내가 직접 고른 카드</strong> · ${self.name}</div>
           ${matched
-            ? `<div class="matchGood">✨ 공명 매치! 게임이 발견한 카드와 내가 고른 카드가 같습니다.</div>`
-            : `<div class="matchOther">🌿 나는 ‘${self.power}’의 힘을 선택했고, 게임에서는 ‘${predicted.power}’의 친화도가 가장 높게 나타났습니다.</div>`}
+            ? `<div class="matchGood">✨ 공명 매치! 게임에서 드러난 주된 렌즈와 내가 고른 카드가 같습니다.</div>`
+            : `<div class="matchOther">🌿 나는 ‘${self.power}’의 힘을 선택했고, 게임에서는 ‘${predicted.power}’ 렌즈가 가장 높게 나타났습니다.</div>`}
         </div>
       </div>`;
   }
@@ -155,15 +241,29 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
   }
 
   document.addEventListener('DOMContentLoaded', function () {
+    // 기존 6문항을 '서로 다른 합리적 관점 3개 + 상황상 최적 답 1개' 구조로 교체
+    if (typeof stages !== 'undefined' && Array.isArray(stages)) {
+      STAGE_PATCHES.forEach(function(patch, i){
+        if (!stages[i]) return;
+        stages[i].choices = patch.choices.slice();
+        stages[i].correct = patch.correct;
+        stages[i].explain = patch.explain;
+        stages[i].lenses = patch.lenses.slice();
+      });
+    }
+
+    const homeDesc = document.querySelector('#home .desc');
+    if (homeDesc) homeDesc.textContent = '여섯 개의 방을 통과해 단서를 모으세요. 각 선택지는 서로 다른 사고 관점을 담고 있습니다. 상황에 가장 적절한 답을 찾는 과정과 내가 처음 고른 관점이 함께 기록됩니다.';
+
     const traitsSection = document.getElementById('traits');
     if (traitsSection) {
       const title = traitsSection.querySelector('.step-title');
       const sub = traitsSection.querySelector('.muted');
       if (title) title.textContent = '나를 가장 잘 설명하는 문장 4개를 순서대로 골라주세요';
-      if (sub) sub.textContent = '1~4순위에는 4·3·2·1점이 주어지고, 각 인물의 방을 첫 시도에 맞힌 경우 해당 인물 친화도 +1점이 더해집니다.';
+      if (sub) sub.textContent = '게임에서 처음 고른 관점과 함께 계산됩니다. 1~4순위 문장에는 4·3·2·1점이 주어집니다.';
     }
     const doneMuted = document.querySelector('#final .donebox .muted');
-    if (doneMuted) doneMuted.textContent = '게임이 발견한 나의 인물 카드와 내가 고른 카드를 비교해보세요.';
+    if (doneMuted) doneMuted.textContent = '게임에서 드러난 사고 렌즈와 내가 직접 고른 카드를 비교해보세요.';
 
     window.renderTraits = function () {
       traitGrid.innerHTML = '';
@@ -206,6 +306,7 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
         const item = TRAIT_ITEMS[i];
         return item ? cardMeta[item.card].name : '';
       });
+      const firstChoiceLenses = STAGE_PATCHES.map(function(_,i){ return firstChoiceLens(i); });
       const payload = {
         session_id: sessionId,
         name: player,
@@ -213,9 +314,11 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
         finish_time: new Date(finishAt).toISOString(),
         duration_ms: finishAt - startAt,
         first_choices: firstChoices,
+        first_choice_lenses: firstChoiceLenses,
         attempts: attempts,
         first_correct: firstCorrect,
         trait_choices: selectedTraits,
+        lens_scores: scores,
         predicted_card: cardMeta[pred].name,
         self_card: cardMeta[selfIndex].name,
         self_match: pred === selfIndex
