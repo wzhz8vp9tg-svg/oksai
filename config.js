@@ -26,10 +26,18 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
 
   const POWER_INDEX = {판단:0, 구조:1, 관점:2, 목소리:3, 연대:4, 제도:5};
   const POWER_NAMES = ['판단','구조','관점','목소리','연대','제도'];
+  const LENS_HINTS = {
+    판단:'현재의 사실·근거·책임을 독립적으로 검토하는 관점',
+    구조:'개인의 성격보다 역할·권한·배분의 패턴을 읽는 관점',
+    관점:'감정과 경험이 무엇을 드러내는지 살펴보는 관점',
+    목소리:'말해지지 않은 경험과 빠진 의견이 들어오게 하는 관점',
+    연대:'실제 장벽을 겪는 사람과 함께 해결책을 설계하는 관점',
+    제도:'좋은 의도를 반복 가능한 규칙·절차로 남기는 관점'
+  };
 
-  // 각 선택지는 모두 나름의 합리적인 관점을 대표합니다.
-  // 정답은 그 상황에서 '가장 먼저/우선' 적용할 관점일 뿐, 다른 선택이 무가치하다는 뜻은 아닙니다.
-  // firstLens는 참가자의 최초 반응만 기록합니다.
+  // 모든 선택지는 하나의 유효한 사고 렌즈를 대표한다.
+  // correct는 '유일한 정답'이 아니라 해당 상황에서 가장 먼저 적용할 최적 렌즈다.
+  // 최초 선택은 성향 분석과 응용 판단력 계산에 기록된다.
   const STAGE_PATCHES = [
     {
       choices:[
@@ -38,7 +46,7 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
         '비슷한 문제가 반복되지 않도록 향후 적용할 기준과 절차를 문서화한다.'
       ],
       lenses:['구조','판단','제도'], correct:1,
-      explain:'관행은 그 자체로 판단의 근거가 되지 않습니다. 이 상황에서는 먼저 현재의 사실·책임·위험을 독립적으로 판단한 뒤 구조나 제도 개선으로 이어가는 것이 핵심입니다.'
+      explain:'관행은 그 자체로 판단의 근거가 되지 않습니다. 먼저 현재의 사실·책임·위험을 독립적으로 판단한 뒤 구조나 제도 개선으로 이어가는 것이 핵심입니다.'
     },
     {
       choices:[
@@ -101,6 +109,7 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     {card:5, text:'좋은 사람의 선의보다 기록·보고·이의제기 같은 절차가 중요하다고 생각하는 편이다.'},
     {card:5, text:'같은 문제가 반복되면 개인의 중재보다 기준과 프로토콜을 남겨야 한다고 생각하는 편이다.'}
   ];
+
   const RANK_WEIGHTS = [4,3,2,1];
   const FIRST_CHOICE_POINTS = 2;
   const FIRST_CORRECT_BONUS = 1;
@@ -116,10 +125,12 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     #finalResultCard .power{color:#d8b56e;font-weight:800;margin-bottom:13px}
     #finalResultCard .why{color:#ddd1bf;line-height:1.8;margin:0 0 12px}
     #finalResultCard .basis{color:#b9ad9b;font-size:13px;line-height:1.65;margin:0 0 16px}
+    #finalResultCard .application{color:#f0d79b;font-size:16px;line-height:1.8;margin:0 0 12px;padding:14px 16px;border:1px solid rgba(216,181,110,.32);border-radius:14px;background:rgba(216,181,110,.08)}
     #finalResultCard .scoreLine{color:#d7c7ac;font-size:13px;line-height:1.8;margin:0 0 20px;padding:12px 14px;border:1px solid rgba(216,181,110,.18);border-radius:12px;background:rgba(0,0,0,.12)}
     #finalResultCard .matchBox{border-top:1px solid rgba(216,181,110,.22);padding-top:18px;line-height:1.75}
     #finalResultCard .matchGood{color:#f0d79b;font-weight:800;font-size:18px}
     #finalResultCard .matchOther{color:#d7c7ac;font-weight:700;font-size:17px}
+    .lens-note{margin-top:8px;color:#b9ad9b;font-size:13px;line-height:1.55}
     @media(max-width:720px){#finalResultCard .resultBody{padding:19px}}
   `;
   document.head.appendChild(style);
@@ -135,22 +146,23 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
   function affinityScores() {
     const scores = Array(6).fill(0);
 
-    // 1) 실제 게임에서 처음 고른 관점: 해당 렌즈 +2
+    // 실제 게임에서 최초로 고른 렌즈 +2
     for (let i = 0; i < STAGE_PATCHES.length; i++) {
       const lens = firstChoiceLens(i);
       if (lens && POWER_INDEX[lens] != null) scores[POWER_INDEX[lens]] += FIRST_CHOICE_POINTS;
     }
 
-    // 2) 최초 선택이 그 방의 최적 정답이었다면 핵심 렌즈 +1 보너스
+    // 최초 선택이 그 방의 최적 렌즈였다면 +1
     if (typeof attempts !== 'undefined' && Array.isArray(attempts)) {
       attempts.forEach(function(count, stageIndex){
-        if (count === 1 && stageIndex >= 0 && stageIndex < scores.length) {
-          scores[stageIndex] += FIRST_CORRECT_BONUS;
-        }
+        const patch = STAGE_PATCHES[stageIndex];
+        if (!patch || count !== 1) return;
+        const lens = patch.lenses[patch.correct];
+        if (POWER_INDEX[lens] != null) scores[POWER_INDEX[lens]] += FIRST_CORRECT_BONUS;
       });
     }
 
-    // 3) 최종 자기보고 성향 문장: 1~4순위 = 4·3·2·1점
+    // 자기보고 성향 문장 1~4순위 = 4·3·2·1점
     if (typeof traitChoices !== 'undefined' && Array.isArray(traitChoices)) {
       traitChoices.forEach(function(itemIndex, rank){
         const item = TRAIT_ITEMS[itemIndex];
@@ -167,7 +179,6 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     const tied = scores.map(function(v,i){return v===max?i:-1;}).filter(function(i){return i>=0;});
     if (tied.length === 1) return tied[0];
 
-    // 동점이면 실제 게임의 최초 선택에서 더 자주 나온 렌즈 우선
     const firstCounts = Array(6).fill(0);
     for (let i=0;i<STAGE_PATCHES.length;i++) {
       const lens = firstChoiceLens(i);
@@ -177,7 +188,6 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     tied.forEach(function(i){ if (firstCounts[i] > firstCounts[best]) best = i; });
     if (firstCounts[best] > 0) return best;
 
-    // 그래도 같으면 자기보고 성향에서 더 먼저 선택된 힘 우선
     if (typeof traitChoices !== 'undefined' && Array.isArray(traitChoices)) {
       for (const itemIndex of traitChoices) {
         const item = TRAIT_ITEMS[itemIndex];
@@ -189,6 +199,11 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
 
   function scoreSummary(scores) {
     return scores.map(function(v,i){return POWER_NAMES[i]+' '+v;}).join(' · ');
+  }
+
+  function applicationCount() {
+    if (typeof attempts === 'undefined' || !Array.isArray(attempts)) return 0;
+    return attempts.filter(function(a){ return a === 1; }).length;
   }
 
   function renderResult(result) {
@@ -205,6 +220,9 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     const self = cardMeta[result.selfIndex] || cardMeta[0];
     const matched = result.predictedIndex === result.selfIndex;
     const scores = result.scores || [];
+    const firstCorrect = Number.isFinite(result.firstCorrect) ? result.firstCorrect : 0;
+    const pct = Math.round(firstCorrect / STAGE_PATCHES.length * 100);
+
     box.innerHTML = `
       <img class="resultPhoto" src="${predicted.image}" alt="${predicted.name} 카드 이미지">
       <div class="resultBody">
@@ -212,7 +230,8 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
         <h3>${predicted.name}</h3>
         <div class="power">주된 사고 렌즈 · ${predicted.power}</div>
         <p class="why">${predicted.text}</p>
-        <p class="basis">이 결과는 정답률만으로 정하지 않습니다. 각 문제에서 처음 선택한 A·B·C가 어떤 사고 렌즈를 나타냈는지, 첫 선택이 그 상황의 최적 답이었는지, 마지막 성향 문장에서 무엇을 우선순위로 골랐는지를 함께 계산합니다. 다른 선택지는 ‘나쁜 답’이 아니라 서로 다른 관점을 뜻합니다.</p>
+        <div class="application"><strong>응용 판단력 · ${firstCorrect} / ${STAGE_PATCHES.length} (${pct}%)</strong><br><span class="muted">교육에서 배운 여섯 관점 가운데 상황의 ‘최적 우선 렌즈’를 첫 선택에서 고른 문항 수입니다.</span></div>
+        <p class="basis">이 결과는 정답률 하나로 성향을 정하지 않습니다. 각 문제에서 처음 선택한 A·B·C가 어떤 사고 렌즈인지, 그 선택이 상황의 최적 우선 렌즈였는지, 마지막 성향 문장에서 무엇을 우선순위로 골랐는지를 함께 계산합니다. 다른 선택지는 ‘틀린 사고’가 아니라 서로 다른 관점을 뜻합니다.</p>
         ${scores.length ? `<div class="scoreLine"><strong>나의 렌즈 점수</strong><br>${scoreSummary(scores)}</div>` : ''}
         <div class="matchBox">
           <div><strong>내가 직접 고른 카드</strong> · ${self.name}</div>
@@ -241,7 +260,6 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
   }
 
   document.addEventListener('DOMContentLoaded', function () {
-    // 기존 6문항을 '서로 다른 합리적 관점 3개 + 상황상 최적 답 1개' 구조로 교체
     if (typeof stages !== 'undefined' && Array.isArray(stages)) {
       STAGE_PATCHES.forEach(function(patch, i){
         if (!stages[i]) return;
@@ -252,8 +270,10 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       });
     }
 
+    const eyebrow = document.querySelector('#home .eyebrow');
+    if (eyebrow) eyebrow.textContent = 'POST-LEARNING APPLICATION MISSION';
     const homeDesc = document.querySelector('#home .desc');
-    if (homeDesc) homeDesc.textContent = '여섯 개의 방을 통과해 단서를 모으세요. 각 선택지는 서로 다른 사고 관점을 담고 있습니다. 상황에 가장 적절한 답을 찾는 과정과 내가 처음 고른 관점이 함께 기록됩니다.';
+    if (homeDesc) homeDesc.textContent = 'PPT 교육에서 익힌 판단·구조·관점·목소리·연대·제도를 실제 상황에 적용해보는 업그레이드 미션입니다. 각 선택지는 서로 다른 사고 관점을 담고 있으며, 상황의 최적 우선 렌즈와 나의 첫 반응이 함께 기록됩니다.';
 
     const traitsSection = document.getElementById('traits');
     if (traitsSection) {
@@ -263,7 +283,30 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       if (sub) sub.textContent = '게임에서 처음 고른 관점과 함께 계산됩니다. 1~4순위 문장에는 4·3·2·1점이 주어집니다.';
     }
     const doneMuted = document.querySelector('#final .donebox .muted');
-    if (doneMuted) doneMuted.textContent = '게임에서 드러난 사고 렌즈와 내가 직접 고른 카드를 비교해보세요.';
+    if (doneMuted) doneMuted.textContent = '응용 판단력과 사고 렌즈, 내가 직접 고른 카드를 함께 비교해보세요.';
+
+    // 오답/정답 이분법 대신 '다른 렌즈 vs 이 상황의 최적 우선 렌즈'로 피드백
+    window.choose = function (i, b) {
+      const s = stages[current];
+      attempts[current]++;
+      if (!firstChoices[current]) firstChoices[current] = String.fromCharCode(65+i);
+      document.querySelectorAll('.choice').forEach(function(x){ x.disabled = true; });
+      feedback.classList.remove('hidden');
+
+      const chosenLens = (s.lenses && s.lenses[i]) || s.power;
+      const optimalLens = (s.lenses && s.lenses[s.correct]) || s.power;
+
+      if (i === s.correct) {
+        b.classList.add('correct');
+        cleared[current] = true;
+        feedback.innerHTML = `<h3>STAGE CLEAR · ${s.item} 획득</h3><p>${s.explain}</p><div class="lens-note">이번 선택의 렌즈 · <strong>${chosenLens}</strong> — ${LENS_HINTS[chosenLens] || ''}</div><div class="reward"><div class="portrait">${s.sig}</div><div><h4>${s.person}</h4><div class="ability">핵심 힘 · ${s.power}</div><p>이 카드는 다음 상황을 읽는 하나의 사고 렌즈를 제공합니다.</p></div></div><div class="actions"><button class="btn" onclick="nextStage()">${current===5?'최종 선택으로':'다음 방으로'}</button></div>`;
+      } else {
+        b.classList.add('selected');
+        feedback.innerHTML = `<h3>다른 렌즈를 골랐습니다 · ${chosenLens}</h3><p>이 선택도 의미가 있습니다. ${LENS_HINTS[chosenLens] || ''}입니다. 다만 지금 상황에서 가장 먼저 적용할 우선 렌즈는 <strong>${optimalLens}</strong> 쪽에 더 가깝습니다. 한 번 더 판단해보세요.</p><div class="lens-note">첫 선택은 성향 분석에 이미 기록되었습니다. 다시 선택해도 첫 반응은 바뀌지 않습니다.</div><div class="actions"><button class="btn secondary" onclick="render()">다시 선택하기</button></div>`;
+      }
+      renderCollection();
+      progress.textContent = `${player} · 단서 ${cleared.filter(Boolean).length} / 6`;
+    };
 
     window.renderTraits = function () {
       traitGrid.innerHTML = '';
@@ -301,7 +344,7 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       const finishAt = Date.now();
       const pred = representativeIndex();
       const scores = affinityScores();
-      const firstCorrect = attempts.filter(function(a){ return a === 1; }).length;
+      const firstCorrect = applicationCount();
       const selectedTraits = traitChoices.map(function(i){
         const item = TRAIT_ITEMS[i];
         return item ? cardMeta[item.card].name : '';
@@ -317,6 +360,7 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
         first_choice_lenses: firstChoiceLenses,
         attempts: attempts,
         first_correct: firstCorrect,
+        application_rate: Math.round(firstCorrect / STAGE_PATCHES.length * 100),
         trait_choices: selectedTraits,
         lens_scores: scores,
         predicted_card: cardMeta[pred].name,
@@ -329,7 +373,7 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       doneName.textContent = player;
       progress.textContent = '완료';
 
-      const result = {predictedIndex: pred, selfIndex: selfIndex, scores: scores};
+      const result = {predictedIndex: pred, selfIndex: selfIndex, scores: scores, firstCorrect: firstCorrect};
       localStorage.setItem(COMPLETE_KEY, '1');
       localStorage.setItem(COMPLETE_NAME_KEY, player);
       localStorage.setItem(COMPLETE_RESULT_KEY, JSON.stringify(result));
