@@ -24,9 +24,11 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     {name:'루스 베이더 긴즈버그', power:'제도', image:'assets/cards/ruth-bader-ginsburg.svg', text:'좋은 의도를 원칙과 절차로 남겨 지속 가능한 변화를 만드는 힘이 강합니다.'}
   ];
 
-  // 대표카드는 문제 정답 횟수와 분리합니다.
-  // 6개 힘마다 2문항씩, 총 12문항 중 자신을 잘 설명하는 4개를 순서대로 고릅니다.
-  // 1~4순위에 4·3·2·1점을 주고 가장 높은 힘을 대표카드로 계산합니다.
+  // 대표카드 계산 규칙
+  // 1) 참가자가 자신을 설명하는 문장 4개를 1~4순위로 선택: 4·3·2·1점
+  // 2) 각 인물의 방에서 첫 시도에 정답을 맞히면 해당 인물 친화도 +1점
+  // 3) 한 번 이상 틀린 뒤 정답을 맞히면 퀴즈 정답으로는 인정하지만 친화도 보너스는 없음
+  // 따라서 '지식 정답'과 '성향 친화도'를 분리해 기록합니다.
   const TRAIT_ITEMS = [
     {card:0, text:'중요한 결정을 앞두면 주변 분위기보다 근거와 책임을 먼저 살피는 편이다.'},
     {card:0, text:'모두가 당연하다고 여기는 방식도 필요하면 다시 질문하는 편이다.'},
@@ -52,7 +54,8 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     #finalResultCard .resultLabel{color:#d8b56e;letter-spacing:.14em;font-size:12px;font-weight:800}
     #finalResultCard h3{font-family:serif;color:#f0d79b;font-size:clamp(28px,5vw,42px);margin:8px 0 4px}
     #finalResultCard .power{color:#d8b56e;font-weight:800;margin-bottom:13px}
-    #finalResultCard .why{color:#ddd1bf;line-height:1.8;margin:0 0 20px}
+    #finalResultCard .why{color:#ddd1bf;line-height:1.8;margin:0 0 12px}
+    #finalResultCard .basis{color:#b9ad9b;font-size:13px;line-height:1.65;margin:0 0 20px}
     #finalResultCard .matchBox{border-top:1px solid rgba(216,181,110,.22);padding-top:18px;line-height:1.75}
     #finalResultCard .matchGood{color:#f0d79b;font-weight:800;font-size:18px}
     #finalResultCard .matchOther{color:#d7c7ac;font-weight:700;font-size:17px}
@@ -60,19 +63,48 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
   `;
   document.head.appendChild(style);
 
-  function representativeIndex() {
+  function affinityScores() {
     const scores = Array(6).fill(0);
-    traitChoices.forEach(function(itemIndex, rank){
-      const item = TRAIT_ITEMS[itemIndex];
-      if (item) scores[item.card] += RANK_WEIGHTS[rank] || 0;
-    });
-    const max = Math.max.apply(null, scores);
-    // 동점이면 더 높은 순위에서 먼저 선택한 힘을 우선합니다.
-    for (const itemIndex of traitChoices) {
-      const item = TRAIT_ITEMS[itemIndex];
-      if (item && scores[item.card] === max) return item.card;
+
+    // 자기 성향 선택: 1~4순위 = 4·3·2·1점
+    if (typeof traitChoices !== 'undefined' && Array.isArray(traitChoices)) {
+      traitChoices.forEach(function(itemIndex, rank){
+        const item = TRAIT_ITEMS[itemIndex];
+        if (item) scores[item.card] += RANK_WEIGHTS[rank] || 0;
+      });
     }
-    return 0;
+
+    // 퀴즈 첫 시도 정답: 그 방의 인물 친화도 +1
+    // stages와 cardMeta는 같은 순서(판단·구조·관점·목소리·연대·제도)입니다.
+    if (typeof attempts !== 'undefined' && Array.isArray(attempts)) {
+      attempts.forEach(function(count, stageIndex){
+        if (count === 1 && stageIndex >= 0 && stageIndex < scores.length) {
+          scores[stageIndex] += 1;
+        }
+      });
+    }
+    return scores;
+  }
+
+  function representativeIndex() {
+    const scores = affinityScores();
+    const max = Math.max.apply(null, scores);
+
+    // 동점 1순위: 참가자가 성향문장에서 더 먼저 고른 카드
+    if (typeof traitChoices !== 'undefined' && Array.isArray(traitChoices)) {
+      for (const itemIndex of traitChoices) {
+        const item = TRAIT_ITEMS[itemIndex];
+        if (item && scores[item.card] === max) return item.card;
+      }
+    }
+
+    // 동점 2순위: 첫 시도 정답을 더 먼저 기록한 방
+    if (typeof attempts !== 'undefined' && Array.isArray(attempts)) {
+      for (let i = 0; i < attempts.length; i++) {
+        if (attempts[i] === 1 && scores[i] === max) return i;
+      }
+    }
+    return scores.indexOf(max) >= 0 ? scores.indexOf(max) : 0;
   }
 
   function renderResult(result) {
@@ -91,15 +123,16 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
     box.innerHTML = `
       <img class="resultPhoto" src="${predicted.image}" alt="${predicted.name} 카드 이미지">
       <div class="resultBody">
-        <div class="resultLabel">YOUR REPRESENTATIVE CARD</div>
+        <div class="resultLabel">GAME DISCOVERED CARD</div>
         <h3>${predicted.name}</h3>
         <div class="power">핵심 힘 · ${predicted.power}</div>
         <p class="why">${predicted.text}</p>
+        <p class="basis">게임이 발견한 카드는 ‘내가 고른 성향 문장의 우선순위’와 ‘각 인물의 방에서 첫 시도에 정답을 알아본 기록’을 함께 반영해 계산했습니다. 심리검사나 성격 진단이 아니라 이 게임 안에서 드러난 친화도를 보여주는 결과입니다.</p>
         <div class="matchBox">
           <div><strong>내가 직접 고른 카드</strong> · ${self.name}</div>
           ${matched
-            ? `<div class="matchGood">✨ 자기매칭 성공! 자신을 꽤 정확하게 읽으셨네요.</div>`
-            : `<div class="matchOther">🌿 또 다른 가능성으로 ‘${self.power}’의 힘을 선택했습니다.</div>`}
+            ? `<div class="matchGood">✨ 공명 매치! 게임이 발견한 카드와 내가 고른 카드가 같습니다.</div>`
+            : `<div class="matchOther">🌿 나는 ‘${self.power}’의 힘을 선택했고, 게임에서는 ‘${predicted.power}’의 친화도가 가장 높게 나타났습니다.</div>`}
         </div>
       </div>`;
   }
@@ -127,12 +160,11 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       const title = traitsSection.querySelector('.step-title');
       const sub = traitsSection.querySelector('.muted');
       if (title) title.textContent = '나를 가장 잘 설명하는 문장 4개를 순서대로 골라주세요';
-      if (sub) sub.textContent = '첫 번째 선택은 1순위, 네 번째 선택은 4순위로 기록됩니다. 대표카드는 이 성향 선택만으로 계산합니다.';
+      if (sub) sub.textContent = '1~4순위에는 4·3·2·1점이 주어지고, 각 인물의 방을 첫 시도에 맞힌 경우 해당 인물 친화도 +1점이 더해집니다.';
     }
     const doneMuted = document.querySelector('#final .donebox .muted');
-    if (doneMuted) doneMuted.textContent = '당신이 찾아낸 대표 카드를 확인해보세요.';
+    if (doneMuted) doneMuted.textContent = '게임이 발견한 나의 인물 카드와 내가 고른 카드를 비교해보세요.';
 
-    // 12문항 렌더링
     window.renderTraits = function () {
       traitGrid.innerHTML = '';
       TRAIT_ITEMS.forEach(function(item, i){
@@ -145,7 +177,6 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       });
     };
 
-    // 4개 순위 선택
     window.pickTrait = function (i, b) {
       const pos = traitChoices.indexOf(i);
       if (pos >= 0) traitChoices.splice(pos, 1);
@@ -164,13 +195,12 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       traitNext.disabled = traitChoices.length !== 4;
     };
 
-    // 문제 정답 횟수는 대표카드 계산에서 완전히 제외
     window.predictedCard = representativeIndex;
 
-    // 기존 finishGame 대신 새 판정·저장 로직 사용
     window.finishGame = function (selfIndex) {
       const finishAt = Date.now();
       const pred = representativeIndex();
+      const scores = affinityScores();
       const firstCorrect = attempts.filter(function(a){ return a === 1; }).length;
       const selectedTraits = traitChoices.map(function(i){
         const item = TRAIT_ITEMS[i];
@@ -196,7 +226,7 @@ window.OKSAI_API_URL = "https://script.google.com/macros/s/AKfycbwW4D8WAN6UTQM3x
       doneName.textContent = player;
       progress.textContent = '완료';
 
-      const result = {predictedIndex: pred, selfIndex: selfIndex};
+      const result = {predictedIndex: pred, selfIndex: selfIndex, scores: scores};
       localStorage.setItem(COMPLETE_KEY, '1');
       localStorage.setItem(COMPLETE_NAME_KEY, player);
       localStorage.setItem(COMPLETE_RESULT_KEY, JSON.stringify(result));
